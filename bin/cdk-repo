@@ -1,0 +1,103 @@
+#!/usr/bin/env ruby
+# 
+# Copyright 2013 Cloudera Inc.
+# 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+# http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+require 'cdk'
+
+USAGE = <<END
+#{$0} <repo-location> <command> [args...]
+  Available commands:
+    list              returns a list of dataset names
+    inspect <name...> prints dataset info for <name>
+    cat <name...>     attempts to cat the contents of <name>
+    delete <name...>  deletes the dataset named <name>
+END
+
+repo_uri, command, *args = ARGV
+
+if command.nil?
+  $stderr.puts USAGE
+  exit 1
+end
+
+class CLI
+  attr_reader :repo
+
+  def initialize( repo )
+    @repo = repo
+  end
+
+  def list
+    puts @repo.list.join("\t")
+  end
+
+  def create( name, descriptor_file )
+    begin
+      @repo.create( name, CDK.load( descriptor_file ) )
+    rescue CDK::DatasetExistsException => ex
+      $stderr.puts "Cannot create dataset: #{name} already exists"
+    end
+  end
+
+  def inspect( *names )
+    names.each do |name|
+      begin
+        ds = @repo.load( name )
+      rescue CDK::NoSuchDatasetException => ex
+        $stderr.puts "Cannot open dataset: #{name} does not exist."
+        next
+      end
+
+      puts ds
+    end
+  end
+
+  def cat( *names )
+    names.each do |name|
+      begin
+        ds = @repo.load( name )
+      rescue CDK::NoSuchDatasetException => ex
+        $stderr.puts "Cannot open dataset: #{name} does not exist."
+        next
+      end
+
+      reader = ds.reader
+      begin
+        reader.open
+        reader.each do |record|
+          puts record.to_s
+        end
+      ensure
+        reader.close
+      end
+    end
+  end
+
+  def delete( *names )
+    args.each do |ds_name|
+      repo.delete( ds_name )
+    end
+  end
+
+  def method_missing(sym, *args)
+    $stderr.puts "Sorry, didn't recognize that command: `#{command}'"
+    exit 1
+  end
+end
+
+repo = CDK::DatasetRepositories.open( repo_uri )
+cli = CLI.new(repo)
+cli.send(command, *args)
